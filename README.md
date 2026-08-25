@@ -1,8 +1,5 @@
-# **When Zero-Day Becomes Training Data:**
-
-# **Learning-Curve Accuracy Stability under Out-of-Distribution Adaptation with GINs on the MalNet-Tiny dataset**
-
-By: Shai Habi, Itamar Link and Tomer Gal Netser
+# **When Zero-Day Becomes Training Data: Learning-Curve Accuracy Stability under Out-of-Distribution Adaptation with GINs on the MalNet-Tiny dataset**
+**By: Shai Habi, Itamar Link and Tomer Gal Netser**
 
 # Introduction
 This repository contains both the code implementations and the results for our project research.
