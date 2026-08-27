@@ -1,1 +1,10 @@
-datasets>=3.0.0
+numpy
+pandas
+matplotlib
+tqdm
+torch
+torch-geometric
+scikit-learn
+huggingface-hub
+safetensors
+networkx
