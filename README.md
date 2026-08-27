@@ -14,12 +14,8 @@ Our research question is when GINs start converging, namely when their learning-
 ### 2. Datasets and References:
 1. Scott Freitas, Yuxiao Dong, Joshua Neil, and Duen Horng Chau. 2021. A Large-Scale Database for Graph Representation Learning. https://arxiv.org/abs/2011.07682
    
-(https://pytorch-geometric.readthedocs.io/en/2.5.2/generated/torch_geometric.datasets.MalNetTiny.html?highlight=malnet)
-
 2.  Ngoc N. Tran, Anwar Said, Waseem Abbas, Tyler Derr, and Xenofon D. Koutsoukos. 2026. Quantifying the Generalization Gap: A New Benchmark for Out-of-Distribution Graph-Based Android Malware Classification. https://arxiv.org/abs/2508.06734
    
-(https://github.com/ngoctnq/malnet-features, https://huggingface.co/datasets/ngoctnq/malnet-features)
-
 
 # Setup
 
