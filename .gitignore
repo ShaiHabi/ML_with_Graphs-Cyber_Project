@@ -1,3 +1,10 @@
-/.cursor
+.cursor/
 .venv/
-.hf_cache/
+venv/
+
+datasets/
+
+__pycache__/
+*.py[cod]
+
+.idea/
