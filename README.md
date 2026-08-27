@@ -17,3 +17,15 @@ Our research question is when GINs start converging, namely when their learning-
 
 
 # Setup
+
+Please follow the instructions:
+
+### 1. Download Dataset:
+Run the script "scripts/datasets_loading_preprocessing.py". It keeps the datasets files locally in "datasets" directory. 
+
+Namely, one can run this file once in order to get the datasets.
+
+### 2. Runs Project:
+
+Run main.py 
+
