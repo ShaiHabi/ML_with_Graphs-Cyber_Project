@@ -12,12 +12,20 @@ import torch
 RANDOM_STATE = 42
 PROJECT_PATH = os.path.dirname(os.path.abspath(__file__))
 DATASETS_PATH = os.path.join(PROJECT_PATH, "datasets")
+SCRIPTS_PATH = os.path.join(PROJECT_PATH, "scripts")
 REQUIRED_DATASET_FILES = [
     "MalNet_datasets.pt",
     "Malnet_Original_splits.pt",
     "MalNet_datasets_df.csv",
     "datasets_statistics.json"
 ]
+
+# The experiment modules import one another by plain module name, so the scripts
+# directory has to be importable on its own. This must happen before they are imported.
+if SCRIPTS_PATH not in sys.path:
+    sys.path.insert(0, SCRIPTS_PATH)
+
+from main_experiment import K_VALUES, experiment, plot_GNN_results
 
 
 def set_random_seed(seed):
@@ -145,9 +153,27 @@ def main():
      MalNet_datasets_df,
      datasets_statistics) = load_preprocessed_datasets()
 
-    # The GNN experiments will be added here.
+    ### MAIN EXPERIMENT ###
+    # Out-of-Distribution and Learning Analysis.
+    # Each architecture gets its own results CSV and its own pair of learning-curve
+    # panels. experiment() resumes from the CSV it wrote, so an interrupted sweep can
+    # simply be restarted and it will only run the (family, k) points still missing.
+    GNN_TYPES = ["GCN", "GIN", "GAT", "GPS"]
 
+    for gnn_type in GNN_TYPES:
 
+        F1_results, Accuracy_results = experiment(
+            gnn_type,
+            MalNet_datasets,
+            device=device
+        )
+
+        plot_GNN_results(
+            gnn_type,
+            K_VALUES,
+            F1_results,
+            Accuracy_results
+        )
 
     return 0
 
