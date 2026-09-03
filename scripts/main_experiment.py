@@ -1,11 +1,8 @@
 # The main experiment: Out-of-Distribution and Learning Analysis.
 #
-# For every zero-day malware family in "Distinct" we train on the whole "Original"
-# dataset plus the first k graphs of that family, and test on the whole "Common"
-# dataset plus the family's held-out graphs. Increasing k answers the research
-# question: how many labelled samples of a newly discovered family does the model
-# need before it classifies the rest of that family reliably?
-
+# Training: Original + Distinct[zeroDay_type][train][:k]
+# Validation: None (the held-out graphs of the zero-day family are in the test set due to lack of data)
+# Test: Distinct[zeroDay_type][validation] + Distinct[zeroDay_type][test]
 
 # General libraries
 import csv
@@ -15,6 +12,7 @@ from pathlib import Path
 
 # PyTorch:
 import torch
+from torch_geometric.loader import DataLoader
 
 # Project:
 from GNNs_models import GNN_Model, evaluate_GNN_model
@@ -22,10 +20,6 @@ from training import (
     RANDOM_STATE,
     build_loss_function,
     collect_graphs,
-    label_counts,
-    make_loader,
-    progress_bars,
-    run_seed,
     set_random_seed,
     train_model,
 )
@@ -49,7 +43,7 @@ K_VALUES = [0, 25, 50, 100, 175, 250, 350, 500, 700]
 
 # The five malware families of the "Distinct" dataset. It holds no benign graphs.
 # The order fixes the colour each family gets in every figure.
-ZERODAYS_types = ["clicker++trojan", "malware", "riskware", "spr", "spyware"]
+ZERODAYS_TYPES = ["clicker++trojan", "malware", "riskware", "spr", "spyware"]
 
 # Model architecture. input_dim is 2 because the node features are
 # log1p(in-degree) and log1p(out-degree).
@@ -62,8 +56,7 @@ CONFIGURATION = {
     "output_dim": 1,
 }
 
-# Optimisation. epochs and batch_size are not in the plan's CONFIGURATION but a
-# training loop cannot run without them.
+# Optimisation
 TRAINING_CONFIGURATION = {
     "optimizer": "Adam",
     "learning_rate": 0.001,
@@ -79,6 +72,9 @@ TRAINING_CONFIGURATION = {
 # at 32.
 BATCH_SIZE_BY_GNN_TYPE = {
     "GPS": 4,
+    "GCN": 32,
+    "GIN": 32,
+    "GAT": 32,
 }
 
 # Categorical palette, one fixed slot per family, plus a marker shape so the series
@@ -96,10 +92,6 @@ RESULT_FIELDS = [
     "pos_weight",
     "test_binary_f1",
     "test_macro_f1",
-    "test_accuracy",
-    "test_precision",
-    "test_recall",
-    "test_roc_auc",
     "zero_day_accuracy",
     "train_loss",
     "seconds",
@@ -108,7 +100,7 @@ RESULT_FIELDS = [
 
 ### Subsection 1: Model construction ###
 
-def build_model(GNN_type, device, configuration=None):
+def build_model(GNN_type, device):
     """
     Builds a GNN_Model from CONFIGURATION.
 
@@ -119,89 +111,40 @@ def build_model(GNN_type, device, configuration=None):
     Inputs:
     --- GNN_type: string, one of "GCN", "GIN", "GAT", "GPS".
     --- device: torch.device
-    --- configuration: dict, defaults to CONFIGURATION.
     Output:
     --- model: GNN_Model on the given device.
     """
 
-    configuration = dict(CONFIGURATION if configuration is None else configuration)
-
     if GNN_type.upper() in {"GAT", "GPS"}:
-        heads = configuration.get("heads")
+        heads = CONFIGURATION.get("heads")
 
-        if not heads or configuration["hidden_dim"] % heads != 0:
+        if not heads or CONFIGURATION["hidden_dim"] % heads != 0:
             raise ValueError(
                 f"{GNN_type} needs hidden_dim to be divisible by heads, got "
-                f"hidden_dim={configuration['hidden_dim']} and heads={heads}."
+                f"hidden_dim={CONFIGURATION['hidden_dim']} and heads={heads}."
             )
 
-    model = GNN_Model(GNN_type, **configuration)
+    model = GNN_Model(GNN_type, **CONFIGURATION)
 
     return model.to(device)
 
 
-def build_optimizer(model, training_configuration=None):
-    """
-    Builds the optimiser named in TRAINING_CONFIGURATION.
+def build_optimizer(model):
+    """ Builds the optimiser named in TRAINING_CONFIGURATION. """
+    learning_rate = TRAINING_CONFIGURATION["learning_rate"]
+    return torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-    Inputs:
-    --- model: torch.nn.Module
-    --- training_configuration: dict, defaults to TRAINING_CONFIGURATION.
-    Output:
-    --- optimizer: torch.optim.Optimizer
-    """
-
-    training_configuration = (
-        TRAINING_CONFIGURATION if training_configuration is None
-        else training_configuration
-    )
-
-    optimizer_name = str(training_configuration["optimizer"]).lower()
-    learning_rate = training_configuration["learning_rate"]
-
-    if optimizer_name == "adam":
-        return torch.optim.Adam(model.parameters(), lr=learning_rate)
-
-    if optimizer_name == "sgd":
-        return torch.optim.SGD(model.parameters(), lr=learning_rate)
-
-    raise ValueError(f"Unsupported optimizer: {training_configuration['optimizer']}")
-
-
-def batch_size_for(GNN_type, training_configuration=None):
-    """
-    Returns the batch size for one architecture, honouring BATCH_SIZE_BY_GNN_TYPE.
-
-    Inputs:
-    --- GNN_type: string
-    --- training_configuration: dict, defaults to TRAINING_CONFIGURATION.
-    Output:
-    --- batch_size: int
-    """
-
-    training_configuration = (
-        TRAINING_CONFIGURATION if training_configuration is None
-        else training_configuration
-    )
-
+def batch_size_for(GNN_type):
+    """ Returns the batch size for one architecture, honouring BATCH_SIZE_BY_GNN_TYPE. """
     return BATCH_SIZE_BY_GNN_TYPE.get(
-        GNN_type.upper(), training_configuration["batch_size"]
+        GNN_type.upper(), TRAINING_CONFIGURATION["batch_size"]
     )
 
 
 ### Subsection 2: Results storage ###
 
 def results_file_path(GNN_type, results_dir=None):
-    """
-    Returns the CSV path holding one architecture's results.
-
-    Inputs:
-    --- GNN_type: string
-    --- results_dir: Path or string, defaults to results/main_experiment.
-    Output:
-    --- path: Path
-    """
-
+    """ Returns the CSV path holding one architecture's results. """
     results_dir = Path(
         MAIN_EXPERIMENT_RESULTS_PATH if results_dir is None else results_dir
     )
@@ -263,11 +206,8 @@ def experiment(
     GNN_type,
     datasets,
     device=None,
-    k_values=None,
-    zero_day_types=None,
     results_dir=None,
-    resume=True,
-    show_progress=False
+    resume=True
 ):
     """
     Runs the incremental out-of-distribution experiment for one architecture.
@@ -288,13 +228,10 @@ def experiment(
     --- datasets: the MalNet_datasets dict, with the "Original", "Common" and
         "Distinct" keys, each of the {malware_type: {split: subset}} form.
     --- device: torch.device, defaults to cuda when available.
-    --- k_values: list of ints, defaults to K_VALUES.
-    --- zero_day_types: list of family names, defaults to ZERODAYS_types.
     --- results_dir: Path or string for the CSV, defaults to results/main_experiment.
     --- resume: bool, skip (family, k) pairs already present in the CSV.
-    --- show_progress: bool, show the per-batch tqdm bars.
     Outputs:
-    --- F1_results: dict mapping family -> list of (k, binary F1 on the whole test set)
+    --- F1_results: dict mapping family -> list of (k, macro F1 on the whole test set)
     --- Accuracy_for_zeroDay: dict mapping family -> list of (k, accuracy on the
         zero-day graphs only)
     """
@@ -302,20 +239,13 @@ def experiment(
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    k_values = list(K_VALUES if k_values is None else k_values)
-    zero_day_types = list(ZERODAYS_types if zero_day_types is None else zero_day_types)
-
-    for name in ("Original", "Common", "Distinct"):
-        if name not in datasets:
-            raise KeyError(f"datasets is missing the {name!r} dataset.")
-
     path = results_file_path(GNN_type, results_dir)
     finished_runs = load_results(path) if resume else {}
 
     batch_size = batch_size_for(GNN_type)
 
-    # Flattens the two datasets that do not change between runs. Building them once
-    # matters: every k below reuses the same lists.
+    # Flattens Original and Common datasets because they don't change between runs.
+    # Building them once matters: every k below reuses the same lists.
     print(f"\n=== Main experiment: {GNN_type.upper()} ===")
     print("Flattening Original and Common ...", end="", flush=True)
     original_graphs = collect_graphs(datasets["Original"])
@@ -325,14 +255,7 @@ def experiment(
     F1_results = {}
     Accuracy_for_zeroDay = {}
 
-    for zero_day_type in zero_day_types:
-
-        if zero_day_type not in datasets["Distinct"]:
-            raise KeyError(
-                f"{zero_day_type!r} is not a malware type of the Distinct dataset. "
-                f"Available: {sorted(datasets['Distinct'].keys())}"
-            )
-
+    for zero_day_type in ZERODAYS_TYPES:
         F1_results[zero_day_type] = []
         Accuracy_for_zeroDay[zero_day_type] = []
 
@@ -340,10 +263,17 @@ def experiment(
 
         # Step 3.1 - the held-out part of the family. It is identical at every k,
         # so the curve measures the effect of k and nothing else.
+        #
+        # No shuffle, and concatenating val before test biases nothing: the loaders
+        # below are built with shuffle=False, evaluate_GNN_model accumulates every
+        # prediction before it computes a metric, and every metric it returns is
+        # order-invariant. Batch composition cannot change a prediction either,
+        # because model.eval() puts BatchNorm on its running statistics. A fixed
+        # order is simply the reproducible choice.
         zeroDay_for_test = (
             list(family_splits["val"]) + list(family_splits["test"])
         )
-        zero_day_loader = make_loader(zeroDay_for_test, batch_size, shuffle=False)
+        zero_day_loader = DataLoader(zeroDay_for_test, batch_size, shuffle=False)
 
         family_train_pool = family_splits["train"]
 
@@ -352,18 +282,11 @@ def experiment(
             f"held out={len(zeroDay_for_test)} graphs"
         )
 
-        for k in k_values:
-
-            if k > len(family_train_pool):
-                raise ValueError(
-                    f"k={k} exceeds the {len(family_train_pool)} graphs in the "
-                    f"train split of {zero_day_type!r}."
-                )
-
+        for k in K_VALUES:
             # Resume: reuse a run that already finished
             if (zero_day_type, k) in finished_runs:
                 row = finished_runs[(zero_day_type, k)]
-                F1_results[zero_day_type].append((k, float(row["test_binary_f1"])))
+                F1_results[zero_day_type].append((k, float(row["test_macro_f1"])))
                 Accuracy_for_zeroDay[zero_day_type].append(
                     (k, float(row["zero_day_accuracy"]))
                 )
@@ -372,9 +295,11 @@ def experiment(
 
             started_at = time.time()
 
-            # Each point gets its own reproducible seed, so the curve is not shaped
-            # by run order and a resumed sweep reproduces the earlier points.
-            set_random_seed(run_seed(GNN_type, zero_day_type, k))
+            # The same seed for every point. Each run builds a fresh model, so this
+            # starts them all from an identical initialisation and the only thing
+            # that changes along a curve is k. Run order cannot shape the result,
+            # and a resumed sweep reproduces the points it already wrote.
+            set_random_seed(RANDOM_STATE)
 
             # Step 3.2.1 - training set
             new_family_graphs = list(family_train_pool[:k]) if k > 0 else []
@@ -383,13 +308,11 @@ def experiment(
             # Step 3.2.2 - test set
             test_set = common_graphs + zeroDay_for_test
 
-            train_loader = make_loader(train_set, batch_size, shuffle=True)
-            test_loader = make_loader(test_set, batch_size, shuffle=False)
+            train_loader = DataLoader(train_set, batch_size, shuffle=True)
+            test_loader = DataLoader(test_set, batch_size, shuffle=False)
 
             # Step 3.2.3 - loss, rebuilt for this k because pos_weight depends on it
-            loss_function = build_loss_function(train_set, device)
-            num_negative, num_positive = label_counts(train_set)
-            pos_weight = num_negative / num_positive if num_positive else float("nan")
+            loss_function, pos_weight = build_loss_function(train_set, device)
 
             # Step 3.2.4 and 3.2.5 - a fresh model per point, then training
             gnn_model = build_model(GNN_type, device)
@@ -403,27 +326,24 @@ def experiment(
                 optimizer,
                 epochs=TRAINING_CONFIGURATION["epochs"],
                 val_loader=None,
-                show_progress=show_progress,
             )
 
-            with progress_bars(show_progress):
+            # Step 3.2.6 - metrics over the whole test set
+            test_results = evaluate_GNN_model(
+                gnn_model, device, test_loader, loss_function
+            )
 
-                # Step 3.2.6 - metrics over the whole test set
-                test_results = evaluate_GNN_model(
-                    gnn_model, device, test_loader, loss_function
-                )
-
-                # Step 3.2.7 - accuracy over the zero-day graphs alone. Every label
-                # there is 1, so accuracy equals recall on that family and ROC AUC is
-                # undefined (evaluate_GNN_model returns NaN, which is expected here).
-                zero_day_results = evaluate_GNN_model(
-                    gnn_model, device, zero_day_loader, loss_function
-                )
+            # Step 3.2.7 - accuracy over the zero-day graphs alone. Every label
+            # there is 1, so accuracy equals recall on that family and ROC AUC is
+            # undefined (evaluate_GNN_model returns NaN, which is expected here).
+            zero_day_results = evaluate_GNN_model(
+                gnn_model, device, zero_day_loader, loss_function
+            )
 
             seconds = time.time() - started_at
 
             # Steps 3.2.8 and 3.2.9
-            F1_results[zero_day_type].append((k, test_results["binary_f1"]))
+            F1_results[zero_day_type].append((k, test_results["macro_f1"]))
             Accuracy_for_zeroDay[zero_day_type].append(
                 (k, zero_day_results["accuracy"])
             )
@@ -437,10 +357,6 @@ def experiment(
                 "pos_weight": f"{pos_weight:.6f}",
                 "test_binary_f1": f"{test_results['binary_f1']:.6f}",
                 "test_macro_f1": f"{test_results['macro_f1']:.6f}",
-                "test_accuracy": f"{test_results['accuracy']:.6f}",
-                "test_precision": f"{test_results['precision']:.6f}",
-                "test_recall": f"{test_results['recall']:.6f}",
-                "test_roc_auc": f"{test_results['roc_auc']:.6f}",
                 "zero_day_accuracy": f"{zero_day_results['accuracy']:.6f}",
                 "train_loss": f"{history['train_losses'][-1]:.6f}",
                 "seconds": f"{seconds:.1f}",
@@ -448,7 +364,7 @@ def experiment(
 
             print(
                 f"   k={k:4d}  train={len(train_set):5d}  pos_weight={pos_weight:.3f}"
-                f"  F1={test_results['binary_f1']:.4f}"
+                f"  macro_F1={test_results['macro_f1']:.4f}"
                 f"  zero_day_acc={zero_day_results['accuracy']:.4f}"
                 f"  ({seconds:.0f}s)"
             )
@@ -469,8 +385,8 @@ def plot_GNN_results(
     ylim=(0.0, 1.02)
 ):
     """
-    Draws the two learning curves of one architecture, side by side: F1 over the
-    whole test set, and accuracy over the zero-day family alone. One line per
+    Draws the two learning curves of one architecture, side by side: macro F1 over
+    the whole test set, and accuracy over the zero-day family alone. One line per
     family, sharing an x axis of k and a y axis of 0 to 1.
 
     Both panels use the same fixed y range so the curves can be compared directly
@@ -479,7 +395,7 @@ def plot_GNN_results(
     Inputs:
     --- GNN_type: string
     --- K_values: list of ints, the x axis
-    --- F1_results: dict mapping family -> list of (k, F1)
+    --- F1_results: dict mapping family -> list of (k, macro F1)
     --- Accuracy_results: dict mapping family -> list of (k, accuracy)
     --- output_dir: Path or string, defaults to results/figures
     --- ylim: (low, high) tuple or None
@@ -516,7 +432,7 @@ def plot_GNN_results(
     figure, axes = plt.subplots(1, 2, figsize=(11, 4.4), sharey=True)
 
     panels = [
-        (axes[0], F1_results, "F1 on the full test set",
+        (axes[0], F1_results, "Macro F1 on the full test set",
          "Common + held-out zero-day graphs"),
         (axes[1], Accuracy_results, "Accuracy on the zero-day family only",
          "held-out graphs of that family"),

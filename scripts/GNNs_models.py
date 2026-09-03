@@ -4,7 +4,6 @@
 
 # General libraries
 import numpy as np
-from tqdm import tqdm
 
 # PyTorch:
 import torch
@@ -231,7 +230,7 @@ def train_one_epoch_GNN_model(model, device, data_loader, optimizer, loss_fn):
     total_loss = 0
     total_graphs = 0
 
-    for step, batch in enumerate(tqdm(data_loader, desc="Iteration")):
+    for batch in data_loader:
         batch = batch.to(device)
 
         if batch.x.shape[0] == 1:
@@ -294,7 +293,7 @@ def evaluate_GNN_model(model, device, data_loader, loss_fn):
     total_graphs = 0
 
     # Runs batches through the model:
-    for step, batch in enumerate(tqdm(data_loader, desc="Iteration")):
+    for batch in data_loader:
         batch = batch.to(device)
 
         # As in HW2

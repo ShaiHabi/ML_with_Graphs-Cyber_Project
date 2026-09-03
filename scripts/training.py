@@ -4,9 +4,7 @@
 
 
 # General libraries
-import contextlib
 import copy
-import hashlib
 import random
 import time
 
@@ -16,11 +14,7 @@ import numpy as np
 # PyTorch:
 import torch
 
-# PyTorch Geometric:
-from torch_geometric.loader import DataLoader
-
 # Project:
-import GNNs_models
 from GNNs_models import train_one_epoch_GNN_model, evaluate_GNN_model
 
 
@@ -54,29 +48,6 @@ def set_random_seed(seed):
     torch.backends.cudnn.benchmark = False
 
     return None
-
-
-def run_seed(*parts):
-    """
-    Derives a deterministic seed from RANDOM_STATE and the identifiers of a single
-    run, for example the GNN type, the zero-day type and k.
-
-    Why: every (family, k) point trains a model from scratch. If all of them shared
-    one global RNG stream, the run order would decide the weight initialisation, so
-    a learning curve would mix "more data" with "different initialisation", and
-    resuming an interrupted sweep would not reproduce the earlier points. Seeding
-    per run makes each point reproducible on its own.
-
-    Inputs:
-    --- parts: any values that identify the run (converted to str).
-    Output:
-    --- seed: int in [0, 2**31)
-    """
-
-    key = "|".join([str(RANDOM_STATE)] + [str(part) for part in parts])
-    digest = hashlib.sha256(key.encode("utf-8")).digest()
-
-    return int.from_bytes(digest[:4], "big") % (2 ** 31)
 
 
 def collect_graphs(dataset_by_type, malware_types=None, splits=None):
@@ -120,6 +91,13 @@ def collect_graphs(dataset_by_type, malware_types=None, splits=None):
 
             graphs.extend(list(splits_of_type[split]))
 
+    # No extra shuffle here, and the ordering by type then split introduces no bias.
+    # A training DataLoader is always built with shuffle=True, so it reshuffles the
+    # indices every epoch and the order of this list never reaches a batch. An
+    # evaluation DataLoader uses shuffle=False, but evaluate_GNN_model accumulates
+    # every prediction before it computes a metric, and all of those metrics are
+    # order-invariant. Leaving the order deterministic is what lets a resumed sweep
+    # rebuild exactly the same training set it used the first time.
     return graphs
 
 
@@ -151,71 +129,29 @@ def build_loss_function(train_graphs, device):
     of the loss by pos_weight, so the weight that balances the two classes is
     num_negative / num_positive. In this project malware (1) outnumbers benign (0)
     roughly four to one, so pos_weight comes out around 0.25 - it damps the
-    over-represented class. Using num_positive / num_negative instead would push
-    the model further towards the majority class, which is the opposite of the
-    intended correction.
+    over-represented class.
 
     Inputs:
     --- train_graphs: list of PyG Data objects.
     --- device: torch.device
-    Output:
+    Outputs:
     --- loss_fn: torch.nn.BCEWithLogitsLoss
+    --- pos_weight: float, the same weight as a plain number, so that callers can
+        record it without counting the labels a second time.
     """
 
     num_negative, num_positive = label_counts(train_graphs)
+    pos_weight = num_negative / num_positive
 
-    if num_positive == 0 or num_negative == 0:
-        # A single-class training set cannot be rebalanced; fall back to the
-        # unweighted loss rather than dividing by zero.
-        return torch.nn.BCEWithLogitsLoss()
-
-    pos_weight = torch.tensor(
-        [num_negative / num_positive],
-        dtype=torch.float32,
-        device=device
+    loss_fn = torch.nn.BCEWithLogitsLoss(
+        pos_weight=torch.tensor(
+            [pos_weight],
+            dtype=torch.float32,
+            device=device
+        )
     )
 
-    return torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-
-
-def make_loader(graphs, batch_size, shuffle):
-    """
-    Wraps a list of graphs in a PyG DataLoader.
-
-    Inputs:
-    --- graphs: list of PyG Data objects.
-    --- batch_size: int
-    --- shuffle: bool
-    Output:
-    --- loader: torch_geometric.loader.DataLoader
-    """
-
-    return DataLoader(graphs, batch_size=batch_size, shuffle=shuffle)
-
-
-@contextlib.contextmanager
-def progress_bars(enabled):
-    """
-    Turns the tqdm bars inside train_one_epoch_GNN_model and evaluate_GNN_model on
-    or off without editing GNNs_models.py. A full sweep is hundreds of runs times
-    tens of epochs, and one bar per epoch buries the run summaries.
-
-    Input:
-    --- enabled: bool
-    Output: context manager
-    """
-
-    if enabled:
-        yield
-        return
-
-    original_tqdm = GNNs_models.tqdm
-    GNNs_models.tqdm = lambda iterable, *args, **kwargs: iterable
-
-    try:
-        yield
-    finally:
-        GNNs_models.tqdm = original_tqdm
+    return loss_fn, pos_weight
 
 
 def train_model(
@@ -227,7 +163,6 @@ def train_model(
     epochs,
     val_loader=None,
     selection_metric="macro_f1",
-    show_progress=False,
     log_every=0
 ):
     """
@@ -249,15 +184,11 @@ def train_model(
     --- epochs: int
     --- val_loader: torch_geometric.loader.DataLoader or None
     --- selection_metric: string, a key of the dict evaluate_GNN_model returns
-    --- show_progress: bool, whether to show the per-batch tqdm bars
     --- log_every: int, print an epoch line every log_every epochs (0 = never)
     Output:
     --- history: dict with the per-epoch training losses, the per-epoch validation
         results, the index of the selected epoch and the elapsed seconds.
     """
-
-    if epochs < 1:
-        raise ValueError("epochs must be at least 1.")
 
     train_losses = []
     validation_results = []
@@ -268,32 +199,30 @@ def train_model(
 
     started_at = time.time()
 
-    with progress_bars(show_progress):
+    for epoch in range(1, epochs + 1):
 
-        for epoch in range(1, epochs + 1):
+        train_loss = train_one_epoch_GNN_model(
+            model, device, train_loader, optimizer, loss_fn
+        )
+        train_losses.append(train_loss)
 
-            train_loss = train_one_epoch_GNN_model(
-                model, device, train_loader, optimizer, loss_fn
-            )
-            train_losses.append(train_loss)
+        epoch_line = f"    epoch {epoch:3d}/{epochs}  train_loss={train_loss:.4f}"
 
-            epoch_line = f"    epoch {epoch:3d}/{epochs}  train_loss={train_loss:.4f}"
+        if val_loader is not None:
+            results = evaluate_GNN_model(model, device, val_loader, loss_fn)
+            validation_results.append(results)
 
-            if val_loader is not None:
-                results = evaluate_GNN_model(model, device, val_loader, loss_fn)
-                validation_results.append(results)
+            score = results[selection_metric]
+            epoch_line += f"  val_{selection_metric}={score:.4f}"
 
-                score = results[selection_metric]
-                epoch_line += f"  val_{selection_metric}={score:.4f}"
+            if best_score is None or score > best_score:
+                best_score = score
+                best_epoch = epoch
+                best_state = copy.deepcopy(model.state_dict())
+                epoch_line += "  *"
 
-                if best_score is None or score > best_score:
-                    best_score = score
-                    best_epoch = epoch
-                    best_state = copy.deepcopy(model.state_dict())
-                    epoch_line += "  *"
-
-            if log_every and (epoch % log_every == 0 or epoch == epochs):
-                print(epoch_line)
+        if log_every and (epoch % log_every == 0 or epoch == epochs):
+            print(epoch_line)
 
     # Restores the best epoch's weights when a validation set was used
     if best_state is not None:

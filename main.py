@@ -130,30 +130,7 @@ def load_preprocessed_datasets():
     )
 
 
-def main():
-    """ Runs the project's experiments using the preprocessed datasets. """
-
-    # Sets the random seed:
-    set_random_seed(RANDOM_STATE)
-
-    # Selects the available device:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    print("Random seed:", RANDOM_STATE)
-    print("Device:", device)
-
-    try:
-        validate_preprocessed_datasets()
-    except FileNotFoundError as error:
-        print(error)
-        sys.exit(1) # Error
-
-    (MalNet_datasets,
-     Malnet_Original_splits,
-     MalNet_datasets_df,
-     datasets_statistics) = load_preprocessed_datasets()
-
-    ### MAIN EXPERIMENT ###
+def control(device, MalNet_datasets, Malnet_Original_splits, MalNet_datasets_df):
     # Out-of-Distribution and Learning Analysis.
     # Each architecture gets its own results CSV and its own pair of learning-curve
     # panels. experiment() resumes from the CSV it wrote, so an interrupted sweep can
@@ -177,6 +154,36 @@ def main():
 
     return 0
 
+
+def main():
+    """ Runs the project's experiments using the preprocessed datasets. """
+
+    # Sets the random seed:
+    set_random_seed(RANDOM_STATE)
+
+    # Selects the available device:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    print("Random seed:", RANDOM_STATE)
+    print("Device:", device)
+
+    try:
+        validate_preprocessed_datasets()
+    except FileNotFoundError as error:
+        print(error)
+        sys.exit(1) # Error
+
+    (MalNet_datasets,
+     Malnet_Original_splits,
+     MalNet_datasets_df,
+     datasets_statistics) = load_preprocessed_datasets()
+
+    control(
+        device,
+        MalNet_datasets,
+        Malnet_Original_splits,
+        MalNet_datasets_df
+    )
 
 if __name__ == "__main__":
     main()
