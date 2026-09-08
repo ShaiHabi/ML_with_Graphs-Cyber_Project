@@ -1,0 +1,4 @@
+gnn_type,zero_day_type,k,num_train_graphs,num_test_graphs,pos_weight,test_binary_f1,test_macro_f1,zero_day_accuracy,train_loss,seconds
+GCN,clicker++trojan,0,5000,5300,0.250000,0.640331,0.503712,0.003333,0.210830,93.2
+GCN,clicker++trojan,25,5025,5300,0.248447,0.716121,0.552348,0.076667,0.212850,96.1
+GCN,clicker++trojan,50,5050,5300,0.246914,0.742650,0.567136,0.120000,0.212626,99.9

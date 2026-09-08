@@ -141,6 +141,18 @@ def build_loss_function(train_graphs, device):
     """
 
     num_negative, num_positive = label_counts(train_graphs)
+
+    # Both directions are fatal, and only one of them is loud on its own. An empty
+    # positive class divides by zero; an empty negative class gives pos_weight = 0,
+    # which multiplies the whole positive term of the loss by zero, so the model
+    # quietly learns to answer 0 to everything while its loss curve looks healthy.
+    # Now that the caller supplies the training set, both are reachable.
+    if num_positive == 0 or num_negative == 0:
+        raise ValueError(
+            "A training set needs both classes to weight the loss, got "
+            f"{num_negative} benign and {num_positive} malicious graphs."
+        )
+
     pos_weight = num_negative / num_positive
 
     loss_fn = torch.nn.BCEWithLogitsLoss(
