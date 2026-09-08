@@ -130,7 +130,7 @@ def load_preprocessed_datasets():
     )
 
 
-def control(device, MalNet_datasets, Malnet_Original_splits, MalNet_datasets_df):
+def Out_of_Distribution_experiment(device, MalNet_datasets, Malnet_Original_splits, MalNet_datasets_df):
     # Out-of-Distribution and Learning Analysis.
     # Each architecture gets its own results CSV and its own pair of learning-curve
     # panels. experiment() resumes from the CSV it wrote, so an interrupted sweep can
@@ -178,7 +178,7 @@ def main():
      MalNet_datasets_df,
      datasets_statistics) = load_preprocessed_datasets()
 
-    control(
+    Out_of_Distribution_experiment(
         device,
         MalNet_datasets,
         Malnet_Original_splits,
