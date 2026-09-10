@@ -11,7 +11,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # Python Geometric
-from torch_geometric.nn import (GCNConv, GINConv, GATConv, GPSConv, global_mean_pool)
+from torch_geometric.nn import (GCNConv, GINConv, GATConv, GPSConv, TransformerConv,
+                                global_mean_pool)
 
 # Sklearn evaluation metrics:
 from sklearn.metrics import (
@@ -37,7 +38,7 @@ class GNN_Model(torch.nn.Module):
       self.input_encoder = None  # For the GPS model
 
       # Validates model type
-      supported_models = {"GCN", "GIN", "GAT", "GPS"}
+      supported_models = {"GCN", "GIN", "GAT", "GT", "GPS"}
       if self.GNN_type not in supported_models:
           raise ValueError(f"Unsupported GNN type: {GNN_type}. Check supported_models")
 
@@ -46,7 +47,7 @@ class GNN_Model(torch.nn.Module):
           raise ValueError("num_layers must be at least 1.")
 
       # Only attention-based models use heads
-      if self.GNN_type in {"GAT", "GPS"} and (self.heads is None or self.heads < 1):
+      if self.GNN_type in {"GAT", "GT", "GPS"} and (self.heads is None or self.heads < 1):
           raise ValueError(f"{self.GNN_type} requires the 'heads' parameter to be a positive integer.")
 
       # GNN layers and BatchNorm layers between GNN layers
@@ -135,6 +136,22 @@ class GNN_Model(torch.nn.Module):
               output_dim,
               heads=self.heads,
               concat=False,
+              dropout=self.dropout
+          )
+
+      # GT - the graph transformer of Shi et al. 2021, "Masked Label Prediction".
+      # Despite the name it is a message passing layer like GAT, not a global
+      # attention layer like GPS: attention is computed over each node's incoming
+      # edges only, so the cost stays linear in |E| rather than in |V| squared.
+      # What differs from GAT is the form of the attention - a scaled dot product
+      # between separate query and key projections, instead of GAT's additive score
+      # over the concatenated pair.
+      elif self.GNN_type == "GT":
+          return TransformerConv(
+              input_dim,
+              output_dim,
+              heads=self.heads,
+              concat=False,      # average the heads, exactly as GAT does above
               dropout=self.dropout
           )
 

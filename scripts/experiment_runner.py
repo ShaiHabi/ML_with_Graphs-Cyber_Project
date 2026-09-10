@@ -125,7 +125,7 @@ def build_model(GNN_type, device):
     --- model: GNN_Model on the given device.
     """
 
-    if GNN_type.upper() in {"GAT", "GPS"}:
+    if GNN_type.upper() in {"GAT", "GT", "GPS"}:
         heads = CONFIGURATION.get("heads")
 
         if not heads or CONFIGURATION["hidden_dim"] % heads != 0:
