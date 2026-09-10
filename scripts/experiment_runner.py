@@ -38,7 +38,10 @@ FIGURES_PATH = RESULTS_PATH / "figures"
 
 # The architectures every experiment compares. Not a parameter of experiment(): all
 # four are always run, and one series per architecture is what the figures show.
-GNN_TYPES = ("GCN", "GIN", "GAT", "GPS")
+# GT is the transformer-style architecture of the group, taking the place GPS used
+# to hold: it keeps attention but computes it over each node's incoming edges, so it
+# stays linear in |E| and runs at the same batch size as the rest.
+GNN_TYPES = ("GCN", "GIN", "GAT", "GT")
 
 # How many graphs of the zero-day family are moved into the training set.
 # Every family has 700 graphs in its train split, which is the 70% the work plan
@@ -66,14 +69,12 @@ TRAINING_CONFIGURATION = {
     "batch_size": 32,
 }
 
-# GPSConv runs global attention over the nodes of each graph, so its memory grows
-# with the largest graph in the batch, not with the average one. MalNet-Tiny graphs
-# reach 14,166 nodes: measured on this codebase, one GPS layer over a batch of 8
-# such graphs needs about 4.8 GB, while a batch of 32 needs far more memory than a
-# normal machine has. The other three architectures are linear in |E| and are fine
-# at 32.
+# Per-architecture batch sizes. All four are linear in |E| - GT included, since its
+# attention is over each node's incoming edges rather than globally over the nodes -
+# so these all match TRAINING_CONFIGURATION["batch_size"]. The table stays so that an
+# architecture whose memory grows with |V| rather than |E| can be given a smaller
+# batch without touching the loop that builds the loaders.
 BATCH_SIZE_BY_GNN_TYPE = {
-    "GPS": 4,
     "GCN": 32,
     "GIN": 32,
     "GAT": 32,
@@ -89,7 +90,7 @@ STYLE_BY_GNN = {
     "GCN": ("#2a78d6", "o"),
     "GIN": ("#eb6834", "s"),
     "GAT": ("#1baf7a", "^"),
-    "GPS": ("#eda100", "D"),
+    "GT": ("#eda100", "D"),
 }
 
 # The columns written to the results CSV. Only what the figures consume, plus enough
@@ -115,18 +116,18 @@ def build_model(GNN_type, device):
     """
     Builds a GNN_Model from CONFIGURATION.
 
-    CONFIGURATION also has to be validated here: GPSConv splits hidden_dim across
-    the attention heads, so hidden_dim must divide evenly by heads or the failure
-    surfaces much later as a shape error inside the attention layer.
+    CONFIGURATION also has to be validated here: the attention layers split
+    hidden_dim across the heads, so hidden_dim must divide evenly by heads or the
+    failure surfaces much later as a shape error inside the attention layer.
 
     Inputs:
-    --- GNN_type: string, one of "GCN", "GIN", "GAT", "GPS".
+    --- GNN_type: string, one of "GCN", "GIN", "GAT", "GT".
     --- device: torch.device
     Output:
     --- model: GNN_Model on the given device.
     """
 
-    if GNN_type.upper() in {"GAT", "GT", "GPS"}:
+    if GNN_type.upper() in {"GAT", "GT"}:
         heads = CONFIGURATION.get("heads")
 
         if not heads or CONFIGURATION["hidden_dim"] % heads != 0:

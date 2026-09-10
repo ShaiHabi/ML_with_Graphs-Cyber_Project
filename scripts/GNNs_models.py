@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # Python Geometric
-from torch_geometric.nn import (GCNConv, GINConv, GATConv, GPSConv, TransformerConv,
+from torch_geometric.nn import (GCNConv, GINConv, GATConv, TransformerConv,
                                 global_mean_pool)
 
 # Sklearn evaluation metrics:
@@ -35,10 +35,9 @@ class GNN_Model(torch.nn.Module):
       self.output_dim = output_dim
       self.num_layers = num_layers
       self.heads = heads
-      self.input_encoder = None  # For the GPS model
 
       # Validates model type
-      supported_models = {"GCN", "GIN", "GAT", "GT", "GPS"}
+      supported_models = {"GCN", "GIN", "GAT", "GT"}
       if self.GNN_type not in supported_models:
           raise ValueError(f"Unsupported GNN type: {GNN_type}. Check supported_models")
 
@@ -47,45 +46,31 @@ class GNN_Model(torch.nn.Module):
           raise ValueError("num_layers must be at least 1.")
 
       # Only attention-based models use heads
-      if self.GNN_type in {"GAT", "GT", "GPS"} and (self.heads is None or self.heads < 1):
+      if self.GNN_type in {"GAT", "GT"} and (self.heads is None or self.heads < 1):
           raise ValueError(f"{self.GNN_type} requires the 'heads' parameter to be a positive integer.")
 
       # GNN layers and BatchNorm layers between GNN layers
       self.convs = torch.nn.ModuleList()
       self.bns = torch.nn.ModuleList()
 
-      # GPS works with one fixed hidden dimension.
-      # Therefore, input features are first projected to hidden_dim.
-      if self.GNN_type == "GPS":
-          self.input_encoder = nn.Linear(input_dim, hidden_dim)
-
-          # All GPS layers: hidden_dim to hidden_dim
-          for i in range(num_layers):
-              self.convs.append(self.build_conv(hidden_dim, hidden_dim))
-
-          # BatchNorm is already included inside the GPSConv layers
+      # If there is only one GNN layer:
+      # input_dim to hidden_dim
+      if num_layers == 1:
+          self.convs.append(self.build_conv(input_dim, hidden_dim))
 
       else:
-          self.input_encoder = nn.Identity()
+          # First layer: input_dim to hidden_dim
+          self.convs.append(self.build_conv(input_dim, hidden_dim))
 
-          # If there is only one GNN layer:
-          # input_dim to hidden_dim
-          if num_layers == 1:
-              self.convs.append(self.build_conv(input_dim, hidden_dim))
+          # Other layers: hidden_dim to hidden_dim
+          # The last layer is hidden_dim as well, since we do graph classification
+          # and we need the node embeddings for pooling
+          for i in range(num_layers - 1):
+              self.convs.append(self.build_conv(hidden_dim, hidden_dim))
 
-          else:
-              # First layer: input_dim to hidden_dim
-              self.convs.append(self.build_conv(input_dim, hidden_dim))
-
-              # Other layers: hidden_dim to hidden_dim
-              # The last layer is hidden_dim as well, since we do graph classification
-              # and we need the node embeddings for pooling
-              for i in range(num_layers - 1):
-                  self.convs.append(self.build_conv(hidden_dim, hidden_dim))
-
-              # BatchNorm after every layer except the last
-              for i in range(num_layers - 1):
-                  self.bns.append(nn.BatchNorm1d(hidden_dim))
+          # BatchNorm after every layer except the last
+          for i in range(num_layers - 1):
+              self.bns.append(nn.BatchNorm1d(hidden_dim))
 
 
       # Graph-level classification:
@@ -141,8 +126,8 @@ class GNN_Model(torch.nn.Module):
 
       # GT - the graph transformer of Shi et al. 2021, "Masked Label Prediction".
       # Despite the name it is a message passing layer like GAT, not a global
-      # attention layer like GPS: attention is computed over each node's incoming
-      # edges only, so the cost stays linear in |E| rather than in |V| squared.
+      # attention layer: attention is computed over each node's incoming edges
+      # only, so the cost stays linear in |E| rather than in |V| squared.
       # What differs from GAT is the form of the attention - a scaled dot product
       # between separate query and key projections, instead of GAT's additive score
       # over the concatenated pair.
@@ -152,28 +137,6 @@ class GNN_Model(torch.nn.Module):
               output_dim,
               heads=self.heads,
               concat=False,      # average the heads, exactly as GAT does above
-              dropout=self.dropout
-          )
-
-      # GPS
-      elif self.GNN_type == "GPS":
-          # GPS layers operate on the same hidden dimension
-          if input_dim != output_dim:
-              raise ValueError("GPSConv requires input_dim and output_dim to be equal.")
-
-          # Local GNN inside the GPS layer
-          local_mlp = nn.Sequential(
-              nn.Linear(output_dim, output_dim),
-              nn.ReLU(),
-              nn.Linear(output_dim, output_dim)
-          )
-
-          local_conv = GINConv(nn=local_mlp)
-
-          return GPSConv(
-              channels=output_dim,
-              conv=local_conv,
-              heads=self.heads,
               dropout=self.dropout
           )
 
@@ -194,26 +157,16 @@ class GNN_Model(torch.nn.Module):
     edge_index = batched_data.edge_index
     batch = batched_data.batch
 
-    # GPS requires the input features to be projected to hidden_dim first
-    x = self.input_encoder(x)
+    # All layers except the last:
+    # Conv -> BatchNorm -> ReLU -> Dropout
+    for i in range(self.num_layers - 1):
+        x = self.convs[i](x, edge_index)
+        x = self.bns[i](x)
+        x = F.relu(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
 
-    # GPS has its own internal normalization and requires the batch vector
-    if self.GNN_type == "GPS":
-        for conv in self.convs:
-            x = conv(x, edge_index, batch=batch)
-
-    # GCN / GIN / GAT
-    else:
-        # All layers except the last:
-        # Conv -> BatchNorm -> ReLU -> Dropout
-        for i in range(self.num_layers - 1):
-            x = self.convs[i](x, edge_index)
-            x = self.bns[i](x)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-
-        # Last GNN layer returns the final node embeddings
-        x = self.convs[self.num_layers - 1](x, edge_index)
+    # Last GNN layer returns the final node embeddings
+    x = self.convs[self.num_layers - 1](x, edge_index)
 
     # Converts all node embeddings of each graph
     # into one graph embedding
