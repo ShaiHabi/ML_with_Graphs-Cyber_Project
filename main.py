@@ -44,7 +44,7 @@ def main():
     run_dataset_analysis(base_test_set=collect_graphs(distinct) + collect_graphs(common["benign"]), device=device)
 
     print("Running per family analysis...")
-    run_per_family_analysis(base_test_set=collect_graphs(distinct), device=device)
+    run_per_family_analysis(device=device)
 
 if __name__ == "__main__":
     main()

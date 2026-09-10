@@ -23,25 +23,18 @@ ZERODAYS_TYPES = ["clicker++trojan", "malware", "riskware", "spr", "spyware"]
 
 def run_out_of_distribution_experiment(device=None, K_values=K_VALUES, resume=True):
     """
-    Sweeps every zero-day family: for each one, trains on the whole Original dataset
-    plus k of that family's graphs, and tests on the whole Common dataset plus the
-    family's held-out graphs.
+    Checks how fast the model converges on an unseen malware family.
+    We train on the whole Original dataset + k of the family, and
+    test on the whole Common dataset + the held-out graphs of that family. Every family
+    in the Distinct dataset is swept in turn, and each one is run with all four GNNs
+    (GCN, GIN, GAT, GT) so the curves can be compared architecture by architecture.
+    Training Input:
+    * base_train_set: 5000 Original graphs (1000 benign, 4000 malware)
+    * k samples of the family being analyzed
 
-    Original and Common are flattened once. They are the same for every family and
-    every k, and the graphs are shared rather than copied, so building them once is
-    both the correct thing and what keeps the sweep in memory.
-
-    Each family gets its own results CSV and its own pair of learning-curve panels.
-    experiment() resumes from the CSV it wrote, so an interrupted sweep can simply be
-    restarted and it only runs the (architecture, k) points still missing.
-
-    Inputs:
-    --- device: torch.device, defaults to cuda when available.
-    --- K_values: iterable of ints.
-    --- resume: bool.
-    Outputs:
-    --- F1_results: dict mapping family -> {architecture: [(k, macro F1), ...]}
-    --- Accuracy_for_zeroDay: dict mapping family -> {architecture: [(k, accuracy), ...]}
+    Testing Input:
+    * base_test_set: 5000 Common graphs (1000 benign, 4000 malware)
+    * zeroDay_for_test: 300 held-out graphs of the family being analyzed
     """
     experiment_name = "Out_of_Distribution"
     base_train_set = collect_graphs(get_original())   # all types, all splits
@@ -87,6 +80,21 @@ def run_out_of_distribution_experiment(device=None, K_values=K_VALUES, resume=Tr
 
 
 def run_dataset_analysis(base_test_set, device=None, K_values=[0], resume=True):
+    """
+    Checks how good the Original dataset already is on its own, without adding any
+    zero-day samples. This is the control experiment for the other two: nothing is
+    changed, so it gives the k = 0 reference point their curves are measured against,
+    and it tells us whether adding the zero-day samples helps at all. The test set is
+    chosen by the caller - main.py runs it once on Common and once on Distinct +
+    Common's benign graphs.
+    Training Input:
+    * base_train_set: 5000 Original graphs (1000 benign, 4000 malware)
+    * no zero-day samples, k is 0
+
+    Testing Input:
+    * base_test_set: passed in by the caller
+    * zeroDay_for_test: empty, there is no family being analyzed
+    """
     experiment_name = "Dataset_Analysis"
 
     base_train_set = collect_graphs(get_original())
