@@ -241,6 +241,66 @@ def append_result(path, row):
     return None
 
 
+def write_results(path, rows):
+    """
+    Rewrites the whole results CSV from the rows given.
+
+    It writes a temporary file beside the target and moves that over it, so an
+    interrupted rewrite leaves the previous CSV intact instead of a truncated one.
+
+    Inputs:
+    --- path: Path
+    --- rows: iterable of row dicts.
+    Output: None
+    """
+
+    temporary_path = Path(f"{path}.tmp")
+
+    with open(temporary_path, "w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=RESULT_FIELDS)
+        writer.writeheader()
+
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in RESULT_FIELDS})
+
+    os.replace(temporary_path, path)
+
+    return None
+
+
+def record_result(path, row, replace=False):
+    """
+    Stores one finished run, dropping the row already filed under its (gnn_type, k)
+    when replace is set.
+
+    Appending is the normal path and the cheap one. It is wrong only for a point
+    whose stored row was rejected by matches_current_sets: the recomputed row would
+    then sit in the file beside the stale one under the same key, load_results keeps
+    whichever comes last, and a later resumed sweep would replay a row nobody chose -
+    the exact stale number the rejection was there to avoid. Rewriting keeps one row
+    per key.
+
+    Inputs:
+    --- path: Path
+    --- row: dict with the keys of RESULT_FIELDS.
+    --- replace: bool, True when a stale row under this key has to go.
+    Output: None
+    """
+
+    if not replace or not os.path.isfile(path):
+        append_result(path, row)
+        return None
+
+    stored_rows = load_results(path)
+
+    # A dict keeps its insertion order, so an overwritten key holds the place it had
+    # in the file and only a genuinely new one lands at the end.
+    stored_rows[(row["gnn_type"], int(row["k"]))] = row
+    write_results(path, stored_rows.values())
+
+    return None
+
+
 def matches_current_sets(row, num_train_graphs, num_test_graphs):
     """
     Says whether a stored row was produced from the sets this call is running.
@@ -397,6 +457,7 @@ def experiment(
             # Resume: reuse a run that already finished, but only if it was produced
             # from the sets this call is holding.
             stored_run = finished_runs.get((GNN_type, k))
+            replaces_stored_run = False
 
             if stored_run is not None:
 
@@ -409,6 +470,10 @@ def experiment(
                     )
                     print(f"   k={k:4d}  (already in {path.name}, skipped)")
                     continue
+
+                # The row is about to be recomputed, so it has to be overwritten
+                # rather than appended. See record_result.
+                replaces_stored_run = True
 
                 print(
                     f"   k={k:4d}  the stored run used "
@@ -464,7 +529,7 @@ def experiment(
             F1_results[GNN_type].append((k, test_results["macro_f1"]))
             Accuracy_for_zeroDay[GNN_type].append((k, zero_day_accuracy))
 
-            append_result(path, {
+            record_result(path, {
                 "gnn_type": GNN_type.upper(),
                 "zero_day_type": zeroDay_type,
                 "k": k,
@@ -476,7 +541,7 @@ def experiment(
                 "zero_day_accuracy": f"{zero_day_accuracy:.6f}",
                 "train_loss": f"{history['train_losses'][-1]:.6f}",
                 "seconds": f"{seconds:.1f}",
-            })
+            }, replace=replaces_stored_run)
 
             print(
                 f"   k={k:4d}  train={len(train_set):5d}  pos_weight={pos_weight:.3f}"

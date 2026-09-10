@@ -79,7 +79,13 @@ def run_out_of_distribution_experiment(device=None, K_values=K_VALUES, resume=Tr
     return F1_results, Accuracy_for_zeroDay
 
 
-def run_dataset_analysis(base_test_set, device=None, K_values=[0], resume=True):
+def run_dataset_analysis(
+    base_test_set,
+    analysis_name,
+    device=None,
+    K_values=(0,),
+    resume=True
+):
     """
     Checks how good the Original dataset already is on its own, without adding any
     zero-day samples. This is the control experiment for the other two: nothing is
@@ -95,46 +101,61 @@ def run_dataset_analysis(base_test_set, device=None, K_values=[0], resume=True):
     * base_test_set: passed in by the caller
     * zeroDay_for_test: empty, there is no family being analyzed
     """
+
     experiment_name = "Dataset_Analysis"
 
+    K_values = tuple(K_values)
+
+    if any(k > 0 for k in K_values):
+        raise ValueError(
+            "run_dataset_analysis has no zero-day family to draw samples from, so "
+            f"every k has to be 0. Got {K_values}."
+        )
+
     base_train_set = collect_graphs(get_original())
-    F1_results = {}
-    Accuracy_for_zeroDay = {}
 
-    for zeroDay_type in [None]:
-        # The held-out part of the family. It is identical at every k, so the curve
-        # measures the effect of k and nothing else.
-        zeroDay_for_test = []
+    # There is no family being analyzed here, so nothing is held out of one.
+    zeroDay_for_test = []
 
-        family_F1, family_accuracy = experiment(
-            zeroDay_type,
-            base_train_set,
-            base_test_set,
-            zeroDay_for_test,
-            experiment_name=experiment_name,
-            K_values=K_values,
-            device=device,
-            resume=resume
-        )
+    analysis_F1, analysis_accuracy = experiment(
+        analysis_name,
+        base_train_set,
+        base_test_set,
+        zeroDay_for_test,
+        experiment_name=experiment_name,
+        K_values=K_values,
+        device=device,
+        resume=resume
+    )
 
-        plot_experiment_results(
-            zeroDay_type,
-            K_values,
-            family_F1,
-            family_accuracy,
-            experiment_name=experiment_name
-        )
+    plot_experiment_results(
+        analysis_name,
+        K_values,
+        analysis_F1,
+        analysis_accuracy,
+        experiment_name=experiment_name
+    )
 
-        F1_results[zeroDay_type] = family_F1
-        Accuracy_for_zeroDay[zeroDay_type] = family_accuracy
-
-    return F1_results, Accuracy_for_zeroDay
+    # Keyed the way the other two drivers key their returns, so a caller can treat
+    # all three alike.
+    return {analysis_name: analysis_F1}, {analysis_name: analysis_accuracy}
 
 
 def run_per_family_analysis(device=None, K_values=K_VALUES, resume=True):
     """
     Checks the performance of the model on each family in the Distinct dataset.
     We use only benign graphs + k of the family for training, and the held-out graphs of that family for testing.
+
+    Every set below is built through collect_graphs' own malware_types and splits
+    filters rather than by indexing into the dataset first. collect_graphs takes the
+    whole {malware_type: {split: subset}} dict and calls .keys() on it, so handing it
+    dataset["benign"]["train"] hands it a PyG subset, which has no .keys() at all.
+
+    The grid keeps its explicit 0: that point trains on the 1,400 benign graphs alone,
+    and is the reference the rest of the curve is read against. build_loss_function is
+    what makes it runnable - a training set with no positives gets pos_weight 1 rather
+    than a division by zero.
+
     Training Input:
     * base_train_set: 1400 benign graphs
     * k samples of the family being analyzed
@@ -145,15 +166,27 @@ def run_per_family_analysis(device=None, K_values=K_VALUES, resume=True):
     """
     experiment_name = "Per_Family_Analysis"
 
-    base_train_set = collect_graphs(get_original()["benign"]["train"]) + collect_graphs(get_common()["benign"]["train"])
+    K_values = tuple(K_values)
 
-    base_val_set = collect_graphs(get_original()["benign"]["val"]) + collect_graphs(get_common()["benign"]["val"])
-    base_test_set = base_val_set + collect_graphs(get_original()["benign"]["test"]) + collect_graphs(get_common()["benign"]["test"])
+    base_train_set = (
+        collect_graphs(get_original(), malware_types=["benign"], splits=["train"])
+        + collect_graphs(get_common(), malware_types=["benign"], splits=["train"])
+    )
+
+    base_test_set = (
+        collect_graphs(get_original(), malware_types=["benign"], splits=["val", "test"])
+        + collect_graphs(get_common(), malware_types=["benign"], splits=["val", "test"])
+    )
+
     F1_results = {}
     Accuracy_for_zeroDay = {}
 
     for zeroDay_type in ZERODAYS_TYPES:
-        zeroDay_for_test = collect_graphs(get_distinct()[zeroDay_type]["val"]) + collect_graphs(get_distinct()[zeroDay_type]["test"])
+        zeroDay_for_test = collect_graphs(
+            get_distinct(),
+            malware_types=[zeroDay_type],
+            splits=["val", "test"]
+        )
 
         family_F1, family_accuracy = experiment(
             zeroDay_type,

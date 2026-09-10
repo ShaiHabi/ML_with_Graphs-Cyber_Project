@@ -266,43 +266,44 @@ def evaluate_GNN_model(model, device, data_loader, loss_fn):
     for batch in data_loader:
         batch = batch.to(device)
 
-        # As in HW2
-        if batch.x.shape[0] == 1:
-          continue
+        # No single-node guard here, unlike the training loop above. That guard is
+        # there because BatchNorm cannot form a batch statistic out of one value and
+        # raises in train mode. Under model.eval() BatchNorm uses its running
+        # statistics instead, so a batch holding a single one-node graph evaluates
+        # fine. Skipping such a batch would drop that graph from every metric while
+        # num_test_graphs in the results CSV still counted it - a silent disagreement
+        # between a score and the set it claims to score.
+        with torch.no_grad():
 
-        else:
-          # Runs the evaluation without calculating gradients
-          with torch.no_grad():
+            # Mask as sanity-check for graphs without a valid label:
+            # ignore nan targets (unlabeled) when computing eval loss/metrics
+            is_labeled = batch.y == batch.y
 
-              # Mask as sanity-check for graphs without a valid label:
-              # ignore nan targets (unlabeled) when computing eval loss/metrics
-              is_labeled = batch.y == batch.y
+            # Runs the model
+            out = model(batch)
 
-              # Runs the model
-              out = model(batch)
+            # Filters predictions and labels using the labeled mask
+            out = out[is_labeled]
+            labels = batch.y[is_labeled].view(out.shape).type(torch.float32)
 
-              # Filters predictions and labels using the labeled mask
-              out = out[is_labeled]
-              labels = batch.y[is_labeled].view(out.shape).type(torch.float32)
+            # Calculates the loss without updating the model
+            loss = loss_fn(out, labels)
 
-              # Calculates the loss without updating the model
-              loss = loss_fn(out, labels)
+            # Converts logits to probabilities
+            probabilities = torch.sigmoid(out)
 
-              # Converts logits to probabilities
-              probabilities = torch.sigmoid(out)
+            # Converts probabilities to binary predictions
+            predictions = (probabilities >= 0.5).long()
 
-              # Converts probabilities to binary predictions
-              predictions = (probabilities >= 0.5).long()
+        # Accumulates the loss over all graphs
+        num_labeled = is_labeled.sum().item()
+        total_loss += loss.item() * num_labeled
+        total_graphs += num_labeled
 
-          # Accumulates the loss over all graphs
-          num_labeled = is_labeled.sum().item()
-          total_loss += loss.item() * num_labeled
-          total_graphs += num_labeled
-
-          # Saves true labels, predictions and probabilities
-          y_true.append(labels.detach().cpu())
-          y_pred.append(predictions.detach().cpu())
-          y_prob.append(probabilities.detach().cpu())
+        # Saves true labels, predictions and probabilities
+        y_true.append(labels.detach().cpu())
+        y_pred.append(predictions.detach().cpu())
+        y_prob.append(probabilities.detach().cpu())
 
     # Out of the for loop's scope
     if total_graphs == 0:

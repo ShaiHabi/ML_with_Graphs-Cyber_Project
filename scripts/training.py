@@ -131,6 +131,11 @@ def build_loss_function(train_graphs, device):
     roughly four to one, so pos_weight comes out around 0.25 - it damps the
     over-represented class.
 
+    A training set with no positives at all is allowed, and gets pos_weight 1. That is
+    the k = 0 point of Per_Family_Analysis, which trains on benign graphs only. The
+    weight is arbitrary there and cannot be anything else: it scales a term of the loss
+    that has no examples to apply it to.
+
     Inputs:
     --- train_graphs: list of PyG Data objects.
     --- device: torch.device
@@ -142,18 +147,22 @@ def build_loss_function(train_graphs, device):
 
     num_negative, num_positive = label_counts(train_graphs)
 
-    # Both directions are fatal, and only one of them is loud on its own. An empty
-    # positive class divides by zero; an empty negative class gives pos_weight = 0,
-    # which multiplies the whole positive term of the loss by zero, so the model
-    # quietly learns to answer 0 to everything while its loss curve looks healthy.
-    # Now that the caller supplies the training set, both are reachable.
-    if num_positive == 0 or num_negative == 0:
+    # An empty negative class is fatal and, worse, silent: num_negative / num_positive
+    # is then 0, which multiplies the whole positive term of the loss by zero, and the
+    # model quietly learns to answer 0 to everything while its loss curve looks
+    # healthy. Nothing in this project is supposed to train on malware alone, so this
+    # can only be a set built wrong.
+    if num_negative == 0:
         raise ValueError(
-            "A training set needs both classes to weight the loss, got "
-            f"{num_negative} benign and {num_positive} malicious graphs."
+            "A training set of nothing but malicious graphs cannot be weighted: "
+            f"got {num_negative} benign and {num_positive} malicious graphs."
         )
 
-    pos_weight = num_negative / num_positive
+    # The other direction is deliberate. Per_Family_Analysis starts its curve at k = 0,
+    # where the training set is benign graphs only, and there the ratio is undefined
+    # rather than wrong: no positive example exists for pos_weight to scale. 1 is the
+    # neutral choice and leaves the loss exactly the unweighted BCE it already is.
+    pos_weight = num_negative / num_positive if num_positive else 1.0
 
     loss_fn = torch.nn.BCEWithLogitsLoss(
         pos_weight=torch.tensor(

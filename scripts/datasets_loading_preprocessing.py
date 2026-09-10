@@ -50,6 +50,14 @@ def load_MalNetTinyOriginal():
     Loads the MalNet-Tiny datasets.
     As the source code does not split by malware_type, we do it ourselves.
 
+    NOT the path preprocessing takes any more - load_MalNet_datasets loads all three
+    variants through load_HF_dataset. This one keeps every node, while the HuggingFace
+    loader drops the isolated ones, and Original is the training set of an experiment
+    whose test set comes from the other two. Kept as the reference implementation
+    against the upstream PyG dataset, and because it is the only code here that reads
+    the official split out of split_info_tiny; do not wire it back into preprocessing
+    without reading the note in load_MalNet_datasets first.
+
     URL:
     https://pytorch-geometric.readthedocs.io/en/2.5.3/generated/torch_geometric.datasets.MalNetTiny.html
 
@@ -272,9 +280,13 @@ def load_HF_dataset(dataset_name, remove_isolated=True):
     --- remove_isolated : bool. Drops every node whose only edge is a self loop,
         which is what the dataset we used before the rework had already done.
         Pass False to keep all the nodes, like load_MalNetTinyOriginal does.
-    Output:
+    Outputs:
     --- dataset : nested dict in the form
         {malware_type: {split: PyG dataset_subset}}.
+    --- dataset_by_split : dict where the keys are ['train', 'val', 'test'].
+        The same pair load_MalNetTinyOriginal returns, so that Original can be loaded
+        from here without main_data_preprocessing losing the flat splits dict it saves
+        as Malnet_Original_splits.
     """
 
     assert dataset_name in MNTF_VARIANTS, f"Invalid dataset name: {dataset_name}"
@@ -317,6 +329,7 @@ def load_HF_dataset(dataset_name, remove_isolated=True):
     # Preserve graph indices by their original malware type,
     # while creating binary labels for classification.
     indices_by_type_and_split = defaultdict(lambda: defaultdict(list))
+    indices_by_split = defaultdict(list)
 
     split_id_to_name = {
         0: "train",
@@ -330,6 +343,9 @@ def load_HF_dataset(dataset_name, remove_isolated=True):
         split_id = int(official_split[index].item())
         split_name = split_id_to_name[split_id]
         indices_by_type_and_split[malware_type][split_name].append(index)
+
+        # Preserve the original train/validation/test split.
+        indices_by_split[split_name].append(index)
 
     # benign = 0, malware = 1.
     # "Distinct" holds no benign type, so all of its graphs are labelled 1.
@@ -359,7 +375,17 @@ def load_HF_dataset(dataset_name, remove_isolated=True):
         in indices_by_type_and_split.items()
     }
 
-    return dataset
+    # Preserve separate subsets by original train/val/test split. Only Original's copy
+    # is used downstream - main_data_preprocessing saves it as Malnet_Original_splits -
+    # but it is one dict comprehension for any variant, and returning it unconditionally
+    # keeps the signature the same for all three.
+    dataset_by_split = {
+        split: full_dataset[indices]
+        for split, indices
+        in indices_by_split.items()
+    }
+
+    return dataset, dataset_by_split
 
 
 def load_MalNet_datasets():
@@ -375,15 +401,30 @@ def load_MalNet_datasets():
     --- MalnetTiny_original_splits: dict where the keys are ['train', 'val', 'test'].
     """
 
+    # All three variants go through one loader, Original included. They did not use
+    # to: Original came from torch_geometric's MalNetTiny, which keeps every node,
+    # while Common and Distinct came from load_HF_dataset with remove_isolated=True.
+    # That left the two sides of the out-of-distribution experiment disagreeing about
+    # what counts as a node - 42% of downloader's nodes are isolated, and every one of
+    # them carries the feature vector [0, 0] - so under global_mean_pool part of the
+    # gap the experiment measures would have been the two loaders differing rather
+    # than the data. It also made frac_isolated_nodes exactly 0 for Common and
+    # Distinct and non-zero for Original, handing the tabular models the name of the
+    # dataset as a feature.
+    #
+    # MNTF_VARIANTS maps "Original" to the upstream "tiny" variant, which is the same
+    # 5,000 graphs; validate_MalNet_datasets_structure checks the 700/100/200 split
+    # per type afterwards either way.
     MalNet_datasets = {}
 
     for dataset_name in ["Original", "Common", "Distinct"]:
         print(f"Loading {dataset_name} ... ", end="")
+        dataset, dataset_by_split = load_HF_dataset(dataset_name)
+        MalNet_datasets[dataset_name] = dataset
+
         if dataset_name == "Original":
-          malnet_tiny_by_type, MalnetTiny_original_splits = load_MalNetTinyOriginal()
-          MalNet_datasets["Original"] = malnet_tiny_by_type
-        else:
-          MalNet_datasets[dataset_name] = load_HF_dataset(dataset_name)
+          MalnetTiny_original_splits = dataset_by_split
+
         print("Done!")
 
     return MalNet_datasets, MalnetTiny_original_splits
