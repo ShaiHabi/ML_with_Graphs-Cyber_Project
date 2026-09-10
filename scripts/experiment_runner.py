@@ -713,3 +713,126 @@ def plot_experiment_results(
         print(f"--- {target}")
 
     return saved_paths
+
+
+### Subsection 5: Replotting stored results ###
+
+def results_from_csv(experiment_name, zeroDay_type, results_dir=None):
+    """
+    Reads a results CSV back into the two dicts experiment() returns.
+
+    A sweep is hundreds of trainings and its CSV is what those hours bought; the
+    figures are seconds of work on top of it. This is what lets them be redrawn from
+    the stored rows alone - no dataset is loaded, no model is built - so the styling
+    of a figure can be changed as often as wanted once the run is over.
+
+    Inputs:
+    --- experiment_name: string, the sub-directory under results/.
+    --- zeroDay_type: string, the label the CSV is filed under.
+    --- results_dir: Path or string overriding results/<experiment_name>.
+    Outputs:
+    --- F1_results: dict mapping architecture -> list of (k, macro F1), sorted by k.
+    --- Accuracy_for_zeroDay: dict mapping architecture -> list of (k, accuracy).
+    --- K_values: sorted list of every k the file holds. Derived from the file rather
+        than taken from K_VALUES, so a partial sweep plots the points it has instead
+        of drawing an axis of k values it never reached.
+    """
+
+    stored_rows = load_results(
+        results_file_path(experiment_name, zeroDay_type, results_dir)
+    )
+
+    F1_results = {}
+    Accuracy_for_zeroDay = {}
+    K_values = set()
+
+    for (GNN_type, k), row in stored_rows.items():
+        F1_results.setdefault(GNN_type, []).append(
+            (k, float(row["test_macro_f1"]))
+        )
+        Accuracy_for_zeroDay.setdefault(GNN_type, []).append(
+            (k, float(row["zero_day_accuracy"]))
+        )
+        K_values.add(k)
+
+    # load_results keys by (gnn_type, k) in file order, and an appended row lands at
+    # the end whatever its k is, so the points have to be put back in k order here.
+    for results in (F1_results, Accuracy_for_zeroDay):
+
+        for GNN_type in results:
+            results[GNN_type].sort()
+
+    return F1_results, Accuracy_for_zeroDay, sorted(K_values)
+
+
+def stored_result_labels(results_root=None):
+    """
+    Finds every results CSV already written, as (experiment_name, label) pairs.
+
+    The label is read out of the file's own zero_day_type column rather than from its
+    file name, because the name is slugged and the label is what the figure is titled
+    with. An empty file - a header and no rows - is skipped, since it names nothing.
+
+    Input:
+    --- results_root: Path or string, defaults to results/.
+    Output:
+    --- labels: list of (experiment_name, zeroDay_type) tuples.
+    """
+
+    results_root = Path(RESULTS_PATH if results_root is None else results_root)
+
+    if not results_root.is_dir():
+        return []
+
+    labels = []
+
+    for path in sorted(results_root.glob("*/*.csv")):
+        stored_rows = load_results(path)
+
+        if not stored_rows:
+            continue
+
+        label = next(iter(stored_rows.values()))["zero_day_type"]
+        labels.append((path.parent.name, label))
+
+    return labels
+
+
+def plot_from_csv(
+    experiment_name,
+    zeroDay_type,
+    results_dir=None,
+    output_dir=None,
+    ylim=(0.0, 1.02)
+):
+    """
+    Draws one family's figure from its stored CSV instead of from a live run.
+
+    Inputs:
+    --- experiment_name: string, the sub-directory under results/.
+    --- zeroDay_type: string, the label the CSV is filed under.
+    --- results_dir: Path or string overriding results/<experiment_name>.
+    --- output_dir: Path or string, defaults to results/figures.
+    --- ylim: (low, high) tuple or None.
+    Output:
+    --- saved_paths: list of Path, the files written. Empty when the CSV holds
+        nothing to plot.
+    """
+
+    F1_results, Accuracy_results, K_values = results_from_csv(
+        experiment_name, zeroDay_type, results_dir
+    )
+
+    if not F1_results:
+        print(f"No stored rows for {experiment_name}: {zeroDay_type}, nothing to plot.")
+        return []
+
+    return plot_experiment_results(
+        zeroDay_type,
+        K_values,
+        F1_results,
+        Accuracy_results,
+        experiment_name=experiment_name,
+        output_dir=output_dir,
+        ylim=ylim
+    )
