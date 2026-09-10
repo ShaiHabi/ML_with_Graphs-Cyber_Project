@@ -77,6 +77,7 @@ BATCH_SIZE_BY_GNN_TYPE = {
     "GCN": 32,
     "GIN": 32,
     "GAT": 32,
+    "GT": 32,
 }
 
 # One fixed colour and marker per architecture, looked up by name rather than by
@@ -286,7 +287,7 @@ def zero_day_train_slice(zeroDay_type, k):
     --- graphs: list of PyG Data objects, empty when k is 0.
     """
 
-    if k <= 0:
+    if k <= 0 or not zeroDay_type:
         return []
 
     return list(get_distinct()[zeroDay_type]["train"][:k])
@@ -297,7 +298,7 @@ def experiment(
     base_train_set,
     base_test_set,
     zeroDay_for_test,
-    experiment_name="Out_of_Distribution",
+    experiment_name,
     K_values=K_VALUES,
     device=None,
     results_dir=None,

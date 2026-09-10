@@ -21,9 +21,6 @@ from training import collect_graphs
 # The order fixes the order the families are swept in.
 ZERODAYS_TYPES = ["clicker++trojan", "malware", "riskware", "spr", "spyware"]
 
-EXPERIMENT_NAME = "Out_of_Distribution"
-
-
 def run_out_of_distribution_experiment(device=None, K_values=K_VALUES, resume=True):
     """
     Sweeps every zero-day family: for each one, trains on the whole Original dataset
@@ -46,11 +43,9 @@ def run_out_of_distribution_experiment(device=None, K_values=K_VALUES, resume=Tr
     --- F1_results: dict mapping family -> {architecture: [(k, macro F1), ...]}
     --- Accuracy_for_zeroDay: dict mapping family -> {architecture: [(k, accuracy), ...]}
     """
-
-    print("\n=== Flattening Original and Common ===")
+    experiment_name = "Out_of_Distribution"
     base_train_set = collect_graphs(get_original())   # all types, all splits
     base_test_set = collect_graphs(get_common())      # all types, all splits
-    print(f"Original={len(base_train_set)}, Common={len(base_test_set)}")
 
     Distinct = get_distinct()
 
@@ -71,7 +66,7 @@ def run_out_of_distribution_experiment(device=None, K_values=K_VALUES, resume=Tr
             base_train_set,
             base_test_set,
             zeroDay_for_test,
-            experiment_name=EXPERIMENT_NAME,
+            experiment_name=experiment_name,
             K_values=K_values,
             device=device,
             resume=resume
@@ -82,7 +77,93 @@ def run_out_of_distribution_experiment(device=None, K_values=K_VALUES, resume=Tr
             K_values,
             family_F1,
             family_accuracy,
-            experiment_name=EXPERIMENT_NAME
+            experiment_name=experiment_name
+        )
+
+        F1_results[zeroDay_type] = family_F1
+        Accuracy_for_zeroDay[zeroDay_type] = family_accuracy
+
+    return F1_results, Accuracy_for_zeroDay
+
+
+def run_dataset_analysis(base_test_set, device=None, K_values=[0], resume=True):
+    experiment_name = "Dataset_Analysis"
+
+    base_train_set = collect_graphs(get_original())
+    F1_results = {}
+    Accuracy_for_zeroDay = {}
+
+    for zeroDay_type in [None]:
+        # The held-out part of the family. It is identical at every k, so the curve
+        # measures the effect of k and nothing else.
+        zeroDay_for_test = []
+
+        family_F1, family_accuracy = experiment(
+            zeroDay_type,
+            base_train_set,
+            base_test_set,
+            zeroDay_for_test,
+            experiment_name=experiment_name,
+            K_values=K_values,
+            device=device,
+            resume=resume
+        )
+
+        plot_experiment_results(
+            zeroDay_type,
+            K_values,
+            family_F1,
+            family_accuracy,
+            experiment_name=experiment_name
+        )
+
+        F1_results[zeroDay_type] = family_F1
+        Accuracy_for_zeroDay[zeroDay_type] = family_accuracy
+
+    return F1_results, Accuracy_for_zeroDay
+
+
+def run_per_family_analysis(device=None, K_values=K_VALUES, resume=True):
+    """
+    Checks the performance of the model on each family in the Distinct dataset.
+    We use only benign graphs + k of the family for training, and the held-out graphs of that family for testing.
+    Training Input:
+    * base_train_set: 1400 benign graphs
+    * k samples of the family being analyzed
+
+    Testing Input:
+    * base_test_set: 600 benign graphs
+    * zeroDay_for_test: 300 held-out graphs of the family being analyzed
+    """
+    experiment_name = "Per_Family_Analysis"
+
+    base_train_set = collect_graphs(get_original()["benign"]["train"]) + collect_graphs(get_common()["benign"]["train"])
+
+    base_val_set = collect_graphs(get_original()["benign"]["val"]) + collect_graphs(get_common()["benign"]["val"])
+    base_test_set = base_val_set + collect_graphs(get_original()["benign"]["test"]) + collect_graphs(get_common()["benign"]["test"])
+    F1_results = {}
+    Accuracy_for_zeroDay = {}
+
+    for zeroDay_type in ZERODAYS_TYPES:
+        zeroDay_for_test = collect_graphs(get_distinct()[zeroDay_type]["val"]) + collect_graphs(get_distinct()[zeroDay_type]["test"])
+
+        family_F1, family_accuracy = experiment(
+            zeroDay_type,
+            base_train_set,
+            base_test_set,
+            zeroDay_for_test,
+            experiment_name=experiment_name,
+            K_values=K_values,
+            device=device,
+            resume=resume
+        )
+
+        plot_experiment_results(
+            zeroDay_type,
+            K_values,
+            family_F1,
+            family_accuracy,
+            experiment_name=experiment_name
         )
 
         F1_results[zeroDay_type] = family_F1
