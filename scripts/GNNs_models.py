@@ -120,8 +120,7 @@ class GNN_Model(torch.nn.Module):
               input_dim,
               output_dim,
               heads=self.heads,
-              concat=False,
-              dropout=self.dropout
+              concat=False
           )
 
       # GT - the graph transformer of Shi et al. 2021, "Masked Label Prediction".
@@ -136,9 +135,8 @@ class GNN_Model(torch.nn.Module):
               input_dim,
               output_dim,
               heads=self.heads,
-              concat=False,      # average the heads, exactly as GAT does above
-              dropout=self.dropout
-          )
+              concat=False       # average the heads, exactly as GAT does above
+          )                      # dropout omitted for the same reason as in GAT above
 
 
   def forward(self, batched_data):

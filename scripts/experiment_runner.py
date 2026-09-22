@@ -93,6 +93,13 @@ STYLE_BY_GNN = {
     "GT": ("#eda100", "D"),
 }
 
+FIGURE_TITLE_BY_EXPERIMENT = {
+    "Out_of_Distribution":
+        "{label} - Incremental Out-of-Distribution Learning Curves",
+    "Per_Family_Analysis":
+        "{label} - Per Family Analysis",
+}
+
 # The columns written to the results CSV. Only what the figures consume, plus enough
 # bookkeeping to tell two runs apart.
 RESULT_FIELDS = [
@@ -557,6 +564,17 @@ def experiment(
 
 ### Subsection 4: Plots ###
 
+def figure_title(experiment_name, label):
+    template = FIGURE_TITLE_BY_EXPERIMENT.get(
+        experiment_name, "{label} - {experiment} learning curves"
+    )
+
+    return template.format(
+        label=label,
+        experiment=str(experiment_name).replace("_", " ").lower(),
+    )
+
+
 def plot_experiment_results(
     zeroDay_type,
     K_values,
@@ -579,7 +597,8 @@ def plot_experiment_results(
     --- K_values: iterable of ints, the x axis
     --- F1_results: dict mapping architecture -> list of (k, macro F1)
     --- Accuracy_results: dict mapping architecture -> list of (k, accuracy)
-    --- experiment_name: string, part of the file name
+    --- experiment_name: string, the file name's prefix and the key that picks
+        the figure's headline out of FIGURE_TITLE_BY_EXPERIMENT
     --- output_dir: Path or string, defaults to results/figures
     --- ylim: (low, high) tuple or None
     Output:
@@ -682,7 +701,7 @@ def plot_experiment_results(
     axes[0].set_ylabel("score")
 
     figure.suptitle(
-        f"{zeroDay_type} - incremental out-of-distribution learning curves",
+        figure_title(experiment_name, zeroDay_type),
         x=0.012, ha="left", fontsize=13, color=ink,
     )
 
