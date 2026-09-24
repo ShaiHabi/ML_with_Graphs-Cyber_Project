@@ -1,3 +1,5 @@
 gnn_type,zero_day_type,k,num_train_graphs,num_test_graphs,pos_weight,test_binary_f1,test_macro_f1,zero_day_accuracy,train_loss,seconds
 GCN,Common,0,5000,5000,0.250000,0.660875,0.522897,nan,0.211051,75.0
 GIN,Common,0,5000,5000,0.250000,0.473167,0.440492,nan,0.160224,68.4
+GAT,Common,0,5000,5000,0.250000,0.546172,0.486968,nan,0.164876,283.4
+GT,Common,0,5000,5000,0.250000,0.582721,0.512752,nan,0.131893,309.5

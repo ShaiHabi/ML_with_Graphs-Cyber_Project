@@ -1,3 +1,5 @@
 gnn_type,zero_day_type,k,num_train_graphs,num_test_graphs,pos_weight,test_binary_f1,test_macro_f1,zero_day_accuracy,train_loss,seconds
 GCN,Distinct_and_benign,0,5000,6000,0.250000,0.532082,0.409319,nan,0.211531,75.6
 GIN,Distinct_and_benign,0,5000,6000,0.250000,0.248741,0.277982,nan,0.157534,69.3
+GAT,Distinct_and_benign,0,5000,6000,0.250000,0.268477,0.290013,nan,0.166992,285.6
+GT,Distinct_and_benign,0,5000,6000,0.250000,0.376751,0.354034,nan,0.132310,311.9
